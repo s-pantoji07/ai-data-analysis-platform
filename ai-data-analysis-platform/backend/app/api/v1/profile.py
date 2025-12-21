@@ -2,15 +2,17 @@ from fastapi import APIRouter, Query, HTTPException
 from app.services.profile_service import profile_dataset
 import os
 
+from app.db.session import SessionLocal
+from app.db.models.dataset import Dataset
+
 router = APIRouter(tags=["Profiling"])
 
 
 @router.get("/")
-def profile_dataset_api(file_path: str = Query(...)):
-    if not file_path.startswith("uploads/"):
-        raise HTTPException(status_code=400, detail="Invalid file path")
+def profile_dataset_api(dataset_id:str):
+    db = SessionLocal()
 
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
+    dataset=db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    
 
-    return profile_dataset(file_path)
+    return profile_dataset(dataset.file_path)
