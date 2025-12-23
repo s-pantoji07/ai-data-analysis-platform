@@ -1,23 +1,13 @@
-from fastapi import APIRouter
-from app.db.session import SessionLocal
-from app.db.models.dataset import Dataset
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.services.metadata_service import MetadataService
 
-router = APIRouter(tags=["Metadata"])
+router = APIRouter()
 
 @router.get("/{dataset_id}")
-
-def get_dataset_metadata(dataset_id: str):
-    db = SessionLocal()
-
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-
-    if not dataset:
-        return {"error": "Dataset not found"}
-    
-    return {
-        "dataset_id": dataset.id,
-        "filename": dataset.filename,
-        "file_path": dataset.file_path,
-        "dataset_type": dataset.dataset_type,
-        "summary":dataset.profiling_summary
-    }
+def fetch_metadata(dataset_id: str, db: Session = Depends(get_db)):
+    metadata = MetadataService.get_dataset_metadata(db, dataset_id)
+    if not metadata:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return metadata
