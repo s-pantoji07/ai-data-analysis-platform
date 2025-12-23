@@ -18,4 +18,6 @@ def get_dataset_metadata(dataset_id: str):
         "dataset_id": dataset.id,
         "filename": dataset.filename,
         "file_path": dataset.file_path,
+        "dataset_type": dataset.dataset_type,
+        "summary":dataset.profiling_summary
     }

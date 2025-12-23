@@ -4,40 +4,47 @@ from app.db.models.dataset import Dataset
 from app.db.models.table import DataTable
 from app.db.models.column import DataColumn
 
-def create_dataset_metadata(
-        db: Session,
-        dataset_id: str,
-        filename: str,
-        file_path: str,
-        columns: list[dict]
-):
-    dataset = Dataset(
-        id = dataset_id,
-        filename = filename,
-        file_path = file_path
-    )
+class MetadataService:
+    @staticmethod
+    def save_metadata(
+        db: Session, 
+        data: dict
+    ):
+        # Extract fields from the data dictionary passed from DatasetService
+        dataset_id = data["dataset_id"]
+        filename = data["filename"]
+        file_path = data["file_path"]
+        dataset_type = data["dataset_type"]
+        profiling_summary = data["profiling_summary"]
 
-    table_id = str(uuid.uuid4()) # Renamed variable for clarity
-    table = DataTable(
-        id = table_id,
-        name = filename,
-        dataset_id = dataset_id
-    )
+        # 1. Dataset
+        dataset = Dataset(
+            id=dataset_id,
+            filename=filename,
+            file_path=file_path,
+            dataset_type=dataset_type,
+            profiling_summary=profiling_summary
+        )
 
-    db.add(dataset)
-    db.add(table)
-    
-    # --- IMPORTANT STEP ---
-    # This sends the dataset and table to the DB buffer 
-    # so the Foreign Key exists when we add columns next.
-    db.flush() 
+        # 2. Table
+        table = DataTable(
+            id=str(uuid.uuid4()),
+            name=filename,
+            dataset_id=dataset_id
+        )
 
-    for col in columns:
-        db.add(DataColumn(
-            id = str(uuid.uuid4()),
-            name = col['name'],
-            dtype = col['dtype'],
-            table_id = table.id
-        ))
+        db.add(dataset)
+        db.add(table)
+        db.flush()
 
-    db.commit()
+        # 3. Columns
+        for col in profiling_summary["columns"]:
+            db.add(DataColumn(
+                id=str(uuid.uuid4()),
+                name=col["name"],
+                dtype=col["dtype"],
+                semantic_type=col["type"],
+                table_id=table.id
+            ))
+
+        db.commit()
