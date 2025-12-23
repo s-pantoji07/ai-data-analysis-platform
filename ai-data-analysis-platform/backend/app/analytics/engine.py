@@ -1,43 +1,36 @@
 from typing import List, Dict, Any
 import duckdb
 import os
-
+import pandas as pd
 from app.analytics.query_models import AnalyticsQuery
 from app.analytics.exceptions import AnalyticsExecutionError
 from app.db.session import SessionLocal
 from app.db.models.dataset import Dataset
 
-
 class AnalyticsEngine:
     """
     Core analytics execution engine.
-    Responsible ONLY for executing analytical queries on datasets.
-    No AI logic, no API logic.
+    Supports:
+    - Standard aggregations, filters, grouping
+    - Profiling queries if query is empty (returns column summary)
     """
 
     def __init__(self):
-        # In-memory DuckDB for fast analytics
         self.con = duckdb.connect(database=":memory:")
 
     # -----------------------------
     # Dataset Loading
     # -----------------------------
     def _load_dataset(self, dataset_id: str) -> str:
-        """
-        Loads dataset into DuckDB and returns table name.
-        """
         db = SessionLocal()
         try:
             dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-
             if not dataset:
                 raise AnalyticsExecutionError("Dataset not found")
-
             if not os.path.exists(dataset.file_path):
                 raise AnalyticsExecutionError("Dataset file missing on disk")
 
             table_name = f"dataset_{dataset_id.replace('-', '_')}"
-
             try:
                 self.con.execute(
                     f"""
@@ -53,21 +46,58 @@ class AnalyticsEngine:
             db.close()
 
     # -----------------------------
+    # Profiling
+    # -----------------------------
+    def _profile_dataset(self, table_name: str) -> Dict[str, Any]:
+        """
+        Returns column-level profiling including:
+        - dtype
+        - semantic type (numeric/categorical/date)
+        - missing values
+        - lists of numeric, categorical, and date columns
+        """
+        df = self.con.execute(f"SELECT * FROM {table_name}").df()
+
+        profile = {
+            "columns": [],
+            "missing_values": {},
+            "numeric_columns": [],
+            "categorical_columns": [],
+            "date_columns": []
+        }
+
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            missing = int(df[col].isna().sum())
+
+            # Determine semantic type
+            if pd.api.types.is_numeric_dtype(df[col]):
+                sem_type = "numeric"
+                profile["numeric_columns"].append(col)
+            elif pd.api.types.is_datetime64_any_dtype(df[col]):
+                sem_type = "date"
+                profile["date_columns"].append(col)
+            else:
+                sem_type = "categorical"
+                profile["categorical_columns"].append(col)
+
+            profile["columns"].append({
+                "name": col,
+                "dtype": dtype,
+                "type": sem_type
+            })
+            profile["missing_values"][col] = missing
+
+        return profile
+
+    # -----------------------------
     # SQL Construction
     # -----------------------------
     def _build_sql(self, table: str, query: AnalyticsQuery) -> str:
-        """
-        Converts AnalyticsQuery into SQL.
-        """
-
-        # SELECT clause logic updated to include group_by columns
         if query.aggregations:
             select_parts = []
-            
-            # If we are grouping, we MUST include those columns in SELECT to see labels
             if query.group_by:
                 select_parts.extend(query.group_by)
-
             select_parts.extend(
                 f"{agg.function.upper()}({agg.column}) AS {agg.function}_{agg.column}"
                 for agg in query.aggregations
@@ -78,20 +108,16 @@ class AnalyticsEngine:
 
         sql = f"SELECT {select_clause} FROM {table}"
 
-        # WHERE clause
         if query.filters:
             conditions = []
             for f in query.filters:
-                # Basic SQL injection safety for values (simple wrapping)
                 value = f"'{f.value}'" if isinstance(f.value, str) else f.value
                 conditions.append(f"{f.column} {f.operator} {value}")
             sql += " WHERE " + " AND ".join(conditions)
 
-        # GROUP BY
         if query.group_by:
             sql += " GROUP BY " + ", ".join(query.group_by)
 
-        # LIMIT
         if query.limit:
             sql += f" LIMIT {query.limit}"
 
@@ -100,15 +126,17 @@ class AnalyticsEngine:
     # -----------------------------
     # Public Execution API
     # -----------------------------
-    def execute(self, query: AnalyticsQuery) -> List[Dict[str, Any]]:
-        """
-        Executes an analytics query and returns structured results.
-        """
+    def execute(self, query: AnalyticsQuery) -> Dict[str, Any]:
         try:
-            table = self._load_dataset(query.dataset_id)
-            sql = self._build_sql(table, query)
-            
-            # Execute and return as list of dicts
+            table_name = self._load_dataset(query.dataset_id)
+
+            # If query is empty, return profiling
+            if not query.select and not query.aggregations and not query.filters:
+                profile = self._profile_dataset(table_name)
+                return {"dataset_id": query.dataset_id, "profiling_summary": profile}
+
+            # Otherwise, run SQL query
+            sql = self._build_sql(table_name, query)
             result_df = self.con.execute(sql).df()
             return result_df.to_dict(orient="records")
 
