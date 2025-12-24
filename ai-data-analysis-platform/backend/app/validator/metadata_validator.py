@@ -44,31 +44,32 @@ class MetadataValidator:
         errors = []
         confidence = 1.0
 
-        # ---------------------------------------------------------
-        # Auto-correction hooks
-        # Sequence: Synonyms -> Inference -> Group By -> Order By
-        # ---------------------------------------------------------
+        # 1. Normalize Column Casing/Spacing (New Rule)
+        # This handles "sepal width" -> "sepal_width"
+        column_fixes = self._auto_correct_column_names(query)
+        if column_fixes:
+            corrections.extend(column_fixes)
+            confidence -= 0.1
 
-        # 1. Resolve column synonyms using metadata-driven matching
-        # This replaces generic terms with actual physical column names
+        # 2. Resolve column synonyms (e.g., "sales" -> "Global_Sales")
         synonym_fixes = self._auto_resolve_column_synonyms(query)
         if synonym_fixes:
             corrections.extend(synonym_fixes)
             confidence -= 0.15
 
-        # 2. Aggregation inference (Updated with Preferred Metrics logic)
+        # 3. Aggregation inference
         agg_fix = self._auto_infer_aggregation(query)
         if agg_fix:
             corrections.append(agg_fix)
             confidence -= 0.25
 
-        # 3. GROUP BY auto-correction
+        # 4. GROUP BY auto-correction
         group_by_fix = self._auto_correct_group_by(query)
         if group_by_fix:
             corrections.append(group_by_fix)
             confidence -= 0.2
 
-        # 4. ORDER BY auto-correction
+        # 5. ORDER BY auto-correction
         order_by_fix = self._auto_correct_order_by(query)
         if order_by_fix:
             corrections.append(order_by_fix)
@@ -94,34 +95,66 @@ class MetadataValidator:
     # Auto-Correction Rules
     # -----------------------------
 
-    def _resolve_column_synonym(self, term: str) -> str | None:
+    def _auto_correct_column_names(self, query: AnalyticsQuery) -> list[Correction]:
         """
-        Metadata-aware synonym resolver.
-        Matches terms against actual column names and semantic types.
+        Normalizes column names by removing underscores and spaces for a fuzzy match.
+        Example: "sepal width" -> "sepal_width"
         """
-        term_l = term.lower()
+        corrections = []
+        
+        # Create a map of {normalized_name: actual_name}
+        # e.g., {"sepalwidth": "sepal_width"}
+        normalized_map = {
+            col.lower().replace("_", "").replace(" ", ""): col
+            for col in self.columns.keys()
+        }
 
+        # Fix aggregations
+        if query.aggregations:
+            for agg in query.aggregations:
+                key = agg.column.lower().replace("_", "").replace(" ", "")
+                if key in normalized_map and agg.column != normalized_map[key]:
+                    original = agg.column
+                    agg.column = normalized_map[key]
+                    corrections.append(Correction(
+                        field="aggregation.column",
+                        original=original,
+                        corrected=agg.column,
+                        reason="Normalized column name using metadata spacing/casing rules"
+                    ))
+
+        # Fix dimensions/select
+        if query.select:
+            new_select = []
+            for col in query.select:
+                key = col.lower().replace("_", "").replace(" ", "")
+                if key in normalized_map and col != normalized_map[key]:
+                    new_select.append(normalized_map[key])
+                    corrections.append(Correction(
+                        field="select",
+                        original=col,
+                        corrected=normalized_map[key],
+                        reason="Normalized column name"
+                    ))
+                else:
+                    new_select.append(col)
+            query.select = new_select
+
+        return corrections
+
+    def _resolve_column_synonym(self, term: str) -> str | None:
+        term_l = term.lower()
         for col_name, meta in self.columns.items():
             col_l = col_name.lower()
-
-            # Direct partial name match (e.g., "sales" matches "Global_Sales")
             if term_l in col_l or col_l in term_l:
                 return col_name
-
-            # Semantic match for common business terms
             if meta["semantic_type"] in NUMERIC_TYPES:
                 if term_l in COLUMN_SYNONYMS["revenue"]:
                     return col_name
-
         return None
 
     def _auto_resolve_column_synonyms(self, query: AnalyticsQuery) -> list[Correction]:
-        """
-        Iterates through query fields to correct invalid columns using synonyms.
-        """
         corrections = []
-
-        # 1. Resolve SELECT columns
         if query.select:
             new_select = []
             for col in query.select:
@@ -131,13 +164,12 @@ class MetadataValidator:
                         new_select.append(resolved)
                         corrections.append(Correction(
                             field="select", original=col, corrected=resolved,
-                            reason="Resolved column synonym using dataset metadata"
+                            reason="Resolved column synonym"
                         ))
                         continue
                 new_select.append(col)
             query.select = new_select
 
-        # 2. Resolve AGGREGATION columns and functions
         if query.aggregations:
             for agg in query.aggregations:
                 if agg.column not in self.columns and agg.column != "*":
@@ -147,50 +179,36 @@ class MetadataValidator:
                         agg.column = resolved
                         corrections.append(Correction(
                             field="aggregations.column", original=original, corrected=resolved,
-                            reason="Mapped synonym to physical dataset column"
+                            reason="Mapped synonym to physical column"
                         ))
-                
-                # Handle function synonyms (e.g., "total" -> "sum")
                 if agg.function.lower() in COLUMN_SYNONYMS["count"]:
                     agg.function = "count"
-
         return corrections
 
     def _auto_infer_aggregation(self, query: AnalyticsQuery) -> Correction | None:
         if query.aggregations:
             return None
-
         numeric_columns = [c for c, m in self.columns.items() if m["semantic_type"] in NUMERIC_TYPES]
         if not numeric_columns:
             return None
-
-        # Heuristic: Prefer common metrics
         preferred = [c for c in numeric_columns if any(k in c.lower() for k in ["sales", "amount", "revenue"])]
         target = preferred[0] if preferred else numeric_columns[0]
-
         query.aggregations = [Aggregation(column=target, function="sum")]
         return Correction(
             field="aggregations", original=None, corrected=[{"column": target, "function": "sum"}],
-            reason="Aggregation inferred from numeric measure and grouping context"
+            reason="Aggregation inferred from numeric measure"
         )
 
     def _auto_correct_group_by(self, query: AnalyticsQuery) -> Correction | None:
         if not query.aggregations or not query.select:
             return None
-
-        missing_group_by = []
-        for col in query.select:
-            if col in self.columns and self.columns[col]["semantic_type"] not in NUMERIC_TYPES:
-                if col not in (query.group_by or []):
-                    missing_group_by.append(col)
-
+        missing_group_by = [col for col in query.select if col in self.columns and self.columns[col]["semantic_type"] not in NUMERIC_TYPES and col not in (query.group_by or [])]
         if not missing_group_by:
             return None
-
         query.group_by = (query.group_by or []) + missing_group_by
         return Correction(
             field="group_by", original=None, corrected=query.group_by,
-            reason="GROUP BY is required for non-aggregated selected columns"
+            reason="GROUP BY auto-added for non-aggregated columns"
         )
 
     def _auto_correct_order_by(self, query: AnalyticsQuery) -> Correction | None:
@@ -202,19 +220,15 @@ class MetadataValidator:
                 query.order_by = corrected
                 return Correction(
                     field="order_by", original=agg.column, corrected=corrected,
-                    reason="Ordering by aggregated metric requires aggregation function"
+                    reason="Corrected order_by to use aggregate function"
                 )
         return None
 
-    # -----------------------------
-    # Validation Checks
-    # -----------------------------
     def _validate_columns(self, query: AnalyticsQuery) -> list[str]:
         errors = []
-        all_cols = list(self.columns.keys())
         for col in (query.select or []) + (query.group_by or []):
             if col not in self.columns:
-                errors.append(f"Column '{col}' not found. Available: {all_cols}")
+                errors.append(f"Column '{col}' not found.")
         return errors
 
     def _validate_aggregations(self, query: AnalyticsQuery) -> list[str]:
