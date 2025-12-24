@@ -120,6 +120,10 @@ class AnalyticsEngine:
 
         if query.limit:
             sql += f" LIMIT {query.limit}"
+        # ORDER BY
+        if query.order_by:
+            direction = query.order_direction.upper()
+            sql += f" ORDER BY {query.order_by} {direction}"
 
         return sql
 

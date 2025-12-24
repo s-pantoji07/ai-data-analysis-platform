@@ -15,5 +15,7 @@ class AnalyticsQuery(BaseModel):
     select:Optional[List[str]] = None
     filters:Optional[List[Filter]]=[]
     group_by:Optional[List[str]] =[]
+    order_by:Optional[str] = None
+    order_direction:Optional[str] = "asc"
     aggregations:Optional[List[Aggregation]] =[]
     limit:Optional[int] = 100
