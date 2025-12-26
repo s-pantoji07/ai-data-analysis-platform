@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from app.api.v1 import upload, query, profile, dashboard, metadata,plan
-
+from dotenv import load_dotenv
+load_dotenv() # This must run before the parser is initialized
 app = FastAPI(title="AI data analysis platform")
 
 app.include_router(upload.router,prefix = "/api/v1/upload", )

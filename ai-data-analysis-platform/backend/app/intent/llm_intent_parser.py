@@ -1,24 +1,20 @@
-from typing import Optional
 import json
-import logging
-
+import os
+from typing import Optional
+import google.generativeai as genai
 from app.intent.models import UserIntent
 from app.intent.exceptions import IntentParsingError
+from app.validator.metadata_validator import MetadataValidator
+import logging
 
-# Gemini SDK (you can swap impl later)
-import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
-
-
 class GeminiIntentParser:
-    """
-    Converts natural language → UserIntent using Gemini.
-    NO planning, NO metadata, NO execution.
-    """
-
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
-        genai.configure(api_key=api_key)
+    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
+        actual_key = api_key or os.getenv("GEMINI_API_KEY")
+        if not actual_key:
+            raise IntentParsingError("Gemini API Key is missing.")
+        genai.configure(api_key=actual_key)
         self.model = genai.GenerativeModel(model)
 
     def parse(self, user_query: str, dataset_id: str) -> UserIntent:
@@ -33,55 +29,55 @@ class GeminiIntentParser:
                 },
             )
 
-            raw_text = response.text
-            logger.debug("Gemini raw output: %s", raw_text)
-            intent_dict = json.loads(raw_text)
+            res_text = response.text
+            intent_dict = json.loads(res_text)
 
-            # --- START OF ADDITION: Normalization ---
-            # Ensure function names are lowercase to satisfy Pydantic Literals
-            if "measures" in intent_dict and isinstance(intent_dict["measures"], list):
-                for measure in intent_dict["measures"]:
-                    if "function" in measure and isinstance(measure["function"], str):
-                        measure["function"] = measure["function"].lower()
-            # --- END OF ADDITION ---
+            # FORCE injection of dataset_id if the LLM forgot it
+            intent_dict["dataset_id"] = dataset_id
+            
+            # Ensure raw_query is preserved
+            if "raw_query" not in intent_dict or not intent_dict["raw_query"]:
+                intent_dict["raw_query"] = user_query
 
-            # Now Pydantic will receive 'avg' instead of 'AVG'
-            intent = UserIntent(**intent_dict)
-            return intent
+            # Normalize functions
+            function_map = {"average": "avg", "mean": "avg", "total": "sum"}
+            if "measures" in intent_dict:
+                for m in intent_dict["measures"]:
+                    # Handle cases where LLM might use 'func' instead of 'function'
+                    func_val = m.get("function") or m.get("func", "count")
+                    m["function"] = function_map.get(func_val.lower(), func_val.lower())
 
-        except json.JSONDecodeError:
-            raise IntentParsingError("LLM response was not valid JSON")
+            return UserIntent(**intent_dict)
+
         except Exception as e:
-            # This captures the ValidationError if normalization fails or other issues occur
-            raise IntentParsingError(str(e))
+            logger.error(f"LLM Parsing failed. Raw response: {response.text if 'response' in locals() else 'No response'}")
+            raise IntentParsingError(f"LLM Parsing failed: {str(e)}")
 
-    # -----------------------------
-    # Prompt Engineering
-    # -----------------------------
     def _build_prompt(self, query: str, dataset_id: str) -> str:
+        validator = MetadataValidator(dataset_id)
+        schema_context = ", ".join([f"{name} ({meta['semantic_type']})" for name, meta in validator.columns.items()])
+
         return f"""
-You are an analytics intent parser.
+        TASK: Convert user query to structured JSON.
+        DATASET_ID: {dataset_id}
+        COLUMNS: {schema_context}
 
-Convert the user's question into a STRICT JSON object
-that matches the following schema exactly:
+        MANDATORY JSON STRUCTURE:
+        {{
+          "dataset_id": "{dataset_id}",
+          "intent_type": "aggregation", 
+          "dimensions": ["column_name"],
+          "measures": [{{ "column": "column_name", "function": "avg|sum|count|min|max" }}],
+          "filters": [],
+          "order_by": null,
+          "limit": 100,
+          "raw_query": "{query}"
+        }}
 
-UserIntent:
-- dataset_id: string
-- intent_type: one of ["aggregation", "ranking", "filter", "profiling"]
-- dimensions: list of strings (or empty)
-- measures: list of {{ column, function }}
-- filters: list of {{ column, operator, value }} (or empty)
-- order_by: string or null
-- limit: integer or null
-- raw_query: original user text
+        CRITICAL RULES:
+        1. "intent_type" must be one of: aggregation, ranking, filter, profiling.
+        2. Use ONLY the column names provided in the COLUMNS list.
+        3. Do not use keys like 'aggregate' or 'func'. Use 'measures' and 'function'.
 
-Rules:
-- DO NOT invent columns
-- DO NOT include explanations
-- Output JSON ONLY
-
-Dataset ID: "{dataset_id}"
-
-User Query:
-"{query}"
-"""
+        USER QUERY: "{query}"
+        """

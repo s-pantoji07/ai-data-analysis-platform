@@ -1,19 +1,27 @@
 from fastapi import APIRouter, HTTPException
-from app.planner.models import PlannerRequest
 from app.services.planner_service import plan_query
-from app.planner.exceptions import QueryPlanningError
+from app.schemas.plan import PlanRequest
 
-router = APIRouter(tags=["Query Planner"])
-
+router = APIRouter()
 
 @router.post("/")
-def plan(request: PlannerRequest):
+def plan(request: PlanRequest):
     try:
-        return plan_query(
+        planned_query = plan_query(
             dataset_id=request.dataset_id,
             intent=request.intent
         )
-    except QueryPlanningError as e:
+
+        # FIX: Check if planned_query is already a dict or a Pydantic model
+        if hasattr(planned_query, "model_dump"):
+            query_data = planned_query.model_dump()
+        else:
+            query_data = planned_query
+
+        return {
+            "status": "success",
+            "planned_query": query_data
+        }
+
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal server error")

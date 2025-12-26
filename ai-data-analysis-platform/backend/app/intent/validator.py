@@ -1,5 +1,8 @@
+from app.db import SessionLocal  # Or where your DB session is defined
+from app.services.metadata_service import MetadataService
+from app.analytics.exceptions import AnalyticsExecutionError
+from app.analytics.engine import AnalyticsQuery  # Assuming this is your query model
 from app.validator.validation_result import ValidationResult
-
 class QueryValidator:
     @staticmethod
     def validate(query: AnalyticsQuery) -> ValidationResult:

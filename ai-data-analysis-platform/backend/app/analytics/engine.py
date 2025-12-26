@@ -130,21 +130,42 @@ class AnalyticsEngine:
     # -----------------------------
     # Public Execution API
     # -----------------------------
-    def execute(self, query: AnalyticsQuery) -> Dict[str, Any]:
+    def execute(self, query: Any) -> Dict[str, Any]:
+        """Core execution with Dictionary-to-Pydantic safety."""
         try:
+        # 1. Re-hydrate if the Orchestrator passed a dictionary
+            if isinstance(query, dict):
+                    try:
+                        query = AnalyticsQuery(**query)
+                    except Exception as e:
+                        raise AnalyticsExecutionError(f"Invalid query format: {str(e)}")
+        
+        # 2. Load dataset context
             table_name = self._load_dataset(query.dataset_id)
 
-            # If query is empty, return profiling
+        # 3. If query is empty, return profiling summary
             if not query.select and not query.aggregations and not query.filters:
                 profile = self._profile_dataset(table_name)
-                return {"dataset_id": query.dataset_id, "profiling_summary": profile}
+                return {
+                "dataset_id": query.dataset_id, 
+                "profiling_summary": profile,
+                "type": "profiling_result"
+            }
 
-            # Otherwise, run SQL query
+        # 4. Standard SQL build and execute
             sql = self._build_sql(table_name, query)
             result_df = self.con.execute(sql).df()
-            return result_df.to_dict(orient="records")
+        
+        # Convert DataFrame to list of records for JSON serialization
+            return {
+            "dataset_id": query.dataset_id,
+            "data": result_df.to_dict(orient="records"),
+            "sql_generated": sql
+        }
 
         except AnalyticsExecutionError:
+        # Re-raise known custom errors
             raise
         except Exception as e:
+        # Wrap unknown errors in our domain exception
             raise AnalyticsExecutionError(f"Analytics execution failed: {str(e)}")

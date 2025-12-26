@@ -1,15 +1,25 @@
-from typing import List, Optional
-from app.analytics.query_models import AnalyticsQuery
+from typing import List, Optional, Any, Union
+from pydantic import BaseModel, Field
 
-class ValidationResult:
-    def __init__(
-        self,
-        is_valid: bool,
-        query: AnalyticsQuery,
-        corrections: Optional[List[str]] = None,
-        confidence_score: float = 1.0,
-    ):
-        self.is_valid = is_valid
-        self.query = query
-        self.corrections = corrections or []
-        self.confidence_score = confidence_score
+class Correction(BaseModel):
+    field: str
+    original: Any
+    corrected: Any
+    reason: Optional[str] = None
+
+class ValidationResult(BaseModel):
+    is_valid: bool
+    confidence_score: float 
+    corrected_query: Optional[Union[dict, Any]] = None 
+    corrections: List[Correction] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+    follow_up_questions: List[str] = Field(default_factory=list)
+
+    @property
+    def aggregations(self):
+        """Allows ConfidenceGate to access aggregations directly."""
+        if not self.corrected_query:
+            return []
+        if isinstance(self.corrected_query, dict):
+            return self.corrected_query.get("aggregations", [])
+        return getattr(self.corrected_query, "aggregations", [])
