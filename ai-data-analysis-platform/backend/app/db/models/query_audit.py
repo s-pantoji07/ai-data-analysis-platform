@@ -27,7 +27,7 @@ class QueryAuditLog(Base):
 
     #excution layer
     final_sql = Column(String,nullable = True)
-    excetution_status = Column(String ,default = "PENDING")
+    execution_status = Column(String ,default = "PENDING")
     row_count = Column(Float,nullable = True)
 
     #metadata

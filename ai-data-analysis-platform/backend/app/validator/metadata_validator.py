@@ -5,12 +5,7 @@ from app.db.models.column import DataColumn
 from app.analytics.query_models import AnalyticsQuery, Aggregation
 from app.validator.validation_result import ValidationResult, Correction
 
-NUMERIC_TYPES = {"int", "int64", "float", "float64", "numeric", "decimal"}
-
-COLUMN_SYNONYMS = {
-    "revenue": ["revenue", "sales", "income", "turnover", "earnings", "amount", "price"],
-    "count": ["count", "number", "total", "quantity", "volume"],
-}
+NUMERIC_TYPES = {"int", "int64", "float", "float64", "numeric", "decimal", "numeric"}
 
 class MetadataValidator:
     def __init__(self, dataset_id: str):
@@ -29,10 +24,12 @@ class MetadataValidator:
                 .filter(DataColumn.table.has(dataset_id=self.dataset_id))
                 .all()
             )
+            # We assume your DataColumn model has a 'sample_data' or similar field
             return {
                 col.name: {
                     "dtype": str(col.dtype).lower(),
                     "semantic_type": str(col.semantic_type).lower(),
+                    "samples": getattr(col, 'samples', "N/A") 
                 }
                 for col in cols
             }
@@ -44,7 +41,6 @@ class MetadataValidator:
     def _normalize_str(self, s: str) -> str:
         if not s: return ""
         s = s.lower().replace("_", "").replace(" ", "").strip()
-        # Suffix stripping handles cases like "SepalLength" -> "SepalLengthCm"
         suffixes = ["cm", "mm", "id", "amount", "qty", "val"]
         for suffix in suffixes:
             if s.endswith(suffix) and len(s) > len(suffix):
@@ -61,7 +57,6 @@ class MetadataValidator:
         return matches[0] if matches else None
 
     def validate(self, query: Union[AnalyticsQuery, dict]) -> ValidationResult:
-    # 1. Ensure we are working with a Pydantic object for the logic phase
         if isinstance(query, dict):
             query_obj = AnalyticsQuery(**query)
         else:
@@ -71,39 +66,29 @@ class MetadataValidator:
         errors = []
         confidence = 1.0
 
-    # ---- Auto-Correction Pipeline (Using query_obj) ----
-    # We pass query_obj to ensure all normalization/resolution happens on the model
+        # Step 1: Normalize column names
         corrections.extend(self._apply_column_normalization(query_obj))
-        corrections.extend(self._apply_synonym_resolution(query_obj))
-    
-        agg_inf = self._auto_infer_aggregation(query_obj)
-        if agg_inf: 
-            corrections.append(agg_inf)
-    
+        
+        # Step 2: Auto-correct structural requirements (GROUP BY, ORDER BY)
         grp_fix = self._auto_correct_group_by(query_obj)
-        if grp_fix: 
-            corrections.append(grp_fix)
+        if grp_fix: corrections.append(grp_fix)
     
         ord_fix = self._auto_correct_order_by(query_obj)
-        if ord_fix: 
-            corrections.append(ord_fix)
+        if ord_fix: corrections.append(ord_fix)
 
-    # ---- Integrity Checks ----
+        # Step 3: Check validity
         errors.extend(self._validate_columns(query_obj))
         errors.extend(self._validate_aggregations(query_obj))
     
-    # Calculate confidence based on changes made
         confidence -= (len(corrections) * 0.1)
     
-    # 2. Final Serialization
-    # We call .model_dump() here so the 'corrected_query' in ValidationResult is a plain dict
         return ValidationResult(
-        is_valid=len(errors) == 0,
-        corrected_query=query_obj.model_dump(), 
-        corrections=corrections,
-        errors=errors,
-        confidence_score=round(max(confidence, 0.1), 2),
-    )
+            is_valid=len(errors) == 0,
+            corrected_query=query_obj.model_dump(), 
+            corrections=corrections,
+            errors=errors,
+            confidence_score=round(max(confidence, 0.1), 2),
+        )
 
     def _apply_column_normalization(self, query: AnalyticsQuery) -> List[Correction]:
         corrections = []
@@ -126,42 +111,20 @@ class MetadataValidator:
             query.group_by = [fix(c, "group_by") for c in query.group_by]
         return corrections
 
-    def _apply_synonym_resolution(self, query: AnalyticsQuery) -> List[Correction]:
-        corrections = []
-        if not query.aggregations: return corrections
-        for agg in query.aggregations:
-            if agg.column not in self.columns:
-                for official_name, meta in self.columns.items():
-                    if meta["semantic_type"] in NUMERIC_TYPES:
-                        if any(syn in agg.column.lower() for syn in COLUMN_SYNONYMS["revenue"]):
-                            old = agg.column
-                            agg.column = official_name
-                            corrections.append(Correction(field="aggregations", original=old, corrected=official_name, reason="Mapped synonym"))
-                            break
-        return corrections
-
-    def _auto_infer_aggregation(self, query: AnalyticsQuery) -> Optional[Correction]:
-        if query.aggregations: return None
-        num_cols = [c for c, m in self.columns.items() if m["semantic_type"] in NUMERIC_TYPES]
-        if not num_cols: return None
-    
-        target = num_cols[0]
-    # Keep as objects/dict
-        query.aggregations = [Aggregation(column=target, function="sum")] 
-    
-        return Correction(
-        field="aggregations", 
-        original=None, 
-        corrected=query.aggregations, # Changed: removed model_dump()
-        reason="Inferred sum"
-    )
-
     def _auto_correct_group_by(self, query: AnalyticsQuery) -> Optional[Correction]:
-        if not query.aggregations or not query.select: return None
-        dims = [c for c in query.select if c in self.columns and self.columns[c]["semantic_type"] not in NUMERIC_TYPES]
-        missing = [d for d in dims if d not in (query.group_by or [])]
+        if not query.aggregations: return None
+        
+        # SQL Rule: Any non-aggregated column in SELECT must be in GROUP BY
+        dims = []
+        if query.select:
+            dims = [c for c in query.select if c in self.columns and self.columns[c]["semantic_type"] not in NUMERIC_TYPES]
+        
+        # Also ensure columns in group_by are actually valid
+        current_gb = query.group_by or []
+        missing = [d for d in dims if d not in current_gb]
+        
         if not missing: return None
-        query.group_by = list(set((query.group_by or []) + missing))
+        query.group_by = list(set(current_gb + missing))
         return Correction(field="group_by", original=None, corrected=query.group_by, reason="Added missing group_by")
 
     def _auto_correct_order_by(self, query: AnalyticsQuery) -> Optional[Correction]:

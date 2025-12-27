@@ -6,9 +6,10 @@ from app.intent.models import UserIntent
 from app.intent.exceptions import IntentParsingError
 from app.validator.metadata_validator import MetadataValidator
 import logging
-
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+load_dotenv()
 class GeminiIntentParser:
     def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
         actual_key = api_key or os.getenv("GEMINI_API_KEY")
@@ -55,29 +56,36 @@ class GeminiIntentParser:
 
     def _build_prompt(self, query: str, dataset_id: str) -> str:
         validator = MetadataValidator(dataset_id)
-        schema_context = ", ".join([f"{name} ({meta['semantic_type']})" for name, meta in validator.columns.items()])
+    
+    # Create a dynamic column description for the LLM
+        col_descriptions = []
+        for name, meta in validator.columns.items():
+            col_descriptions.append(f"- {name} ({meta['semantic_type']}). Samples: {meta.get('samples', 'N/A')}")
+    
+        schema_context = "\n".join(col_descriptions)
 
         return f"""
-        TASK: Convert user query to structured JSON.
-        DATASET_ID: {dataset_id}
-        COLUMNS: {schema_context}
+    TASK: Act as a Data Scientist. Convert the user query into a structured JSON analytics plan.
+    DATASET_ID: {dataset_id}
 
-        MANDATORY JSON STRUCTURE:
-        {{
-          "dataset_id": "{dataset_id}",
-          "intent_type": "aggregation", 
-          "dimensions": ["column_name"],
-          "measures": [{{ "column": "column_name", "function": "avg|sum|count|min|max" }}],
-          "filters": [],
-          "order_by": null,
-          "limit": 100,
-          "raw_query": "{query}"
-        }}
+    AVAILABLE COLUMNS & SAMPLES:
+    {schema_context}
 
-        CRITICAL RULES:
-        1. "intent_type" must be one of: aggregation, ranking, filter, profiling.
-        2. Use ONLY the column names provided in the COLUMNS list.
-        3. Do not use keys like 'aggregate' or 'func'. Use 'measures' and 'function'.
+    CRITICAL RULES:
+    1. Only use column names exactly as listed above.
+    2. Identify the core measure the user wants (e.g., 'sales', 'total', 'average'). 
+    3. If 'sales' is requested, map it to the numeric column that contains sales data (e.g., Global_Sales), NOT identifiers like 'Rank'.
+    4. Dimensions are categorical columns (Genre, Platform, etc.).
 
-        USER QUERY: "{query}"
-        """
+    MANDATORY JSON STRUCTURE:
+    {{
+      "dataset_id": "{dataset_id}",
+      "intent_type": "aggregation", 
+      "dimensions": ["Column1", "Column2"],
+      "measures": [{{ "column": "NumericColumn", "function": "sum|avg|count|min|max" }}],
+      "filters": [],
+      "limit": 100
+    }}
+
+    USER QUERY: "{query}"
+    """
