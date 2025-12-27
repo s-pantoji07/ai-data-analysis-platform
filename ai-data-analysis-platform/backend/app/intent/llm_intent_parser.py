@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 load_dotenv()
 class GeminiIntentParser:
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash-lite"):
         actual_key = api_key or os.getenv("GEMINI_API_KEY")
         if not actual_key:
             raise IntentParsingError("Gemini API Key is missing.")
