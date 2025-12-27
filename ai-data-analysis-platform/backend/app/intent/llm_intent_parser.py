@@ -18,6 +18,8 @@ class GeminiIntentParser:
         genai.configure(api_key=actual_key)
         self.model = genai.GenerativeModel(model)
 
+    # app/intent/llm_intent_parser.py
+
     def parse(self, user_query: str, dataset_id: str) -> UserIntent:
         prompt = self._build_prompt(user_query, dataset_id)
 
@@ -25,33 +27,46 @@ class GeminiIntentParser:
             response = self.model.generate_content(
                 prompt,
                 generation_config={
-                    "temperature": 0,
-                    "response_mime_type": "application/json",
-                },
-            )
+                "temperature": 0,
+                "response_mime_type": "application/json",
+            },
+        )
 
             res_text = response.text
             intent_dict = json.loads(res_text)
 
-            # FORCE injection of dataset_id if the LLM forgot it
+        # 1. Standardize the basics
             intent_dict["dataset_id"] = dataset_id
-            
-            # Ensure raw_query is preserved
-            if "raw_query" not in intent_dict or not intent_dict["raw_query"]:
+            if "raw_query" not in intent_dict or not    intent_dict["raw_query"]:
                 intent_dict["raw_query"] = user_query
 
-            # Normalize functions
+        # 2. FIX: Operator Normalization Map
+            op_map = {
+            "eq": "=", "equal": "=", "equals": "=",
+            "neq": "!=", "not_equal": "!=",
+            "gt": ">", "greater_than": ">",
+            "gte": ">=", "greater_than_or_equal": ">=",
+            "lt": "<", "less_than": "<",
+            "lte": "<=", "less_than_or_equal": "<=",
+            "contains": "in", "like": "in"
+        }
+
+            if "filters" in intent_dict:
+                for f in intent_dict["filters"]:
+                    raw_op = f.get("operator", "").lower()
+                    f["operator"] = op_map.get(raw_op, raw_op) # Replace if in map, else keep raw
+
+        # 3. Normalize functions (already in your code)
             function_map = {"average": "avg", "mean": "avg", "total": "sum"}
             if "measures" in intent_dict:
                 for m in intent_dict["measures"]:
-                    # Handle cases where LLM might use 'func' instead of 'function'
                     func_val = m.get("function") or m.get("func", "count")
                     m["function"] = function_map.get(func_val.lower(), func_val.lower())
 
             return UserIntent(**intent_dict)
 
         except Exception as e:
-            logger.error(f"LLM Parsing failed. Raw response: {response.text if 'response' in locals() else 'No response'}")
+            logger.error(f"LLM Parsing failed: {str(e)}")
             raise IntentParsingError(f"LLM Parsing failed: {str(e)}")
 
     def _build_prompt(self, query: str, dataset_id: str) -> str:
@@ -76,6 +91,8 @@ class GeminiIntentParser:
     2. Identify the core measure the user wants (e.g., 'sales', 'total', 'average'). 
     3. If 'sales' is requested, map it to the numeric column that contains sales data (e.g., Global_Sales), NOT identifiers like 'Rank'.
     4. Dimensions are categorical columns (Genre, Platform, etc.).
+    5. Only use these operators for filters: '=', '!=', '<', '<=', '>', '>=', 'in', 'not in'. 
+   NEVER use words like 'eq' or 'equals'.
 
     MANDATORY JSON STRUCTURE:
     {{

@@ -84,7 +84,7 @@ class MetadataValidator:
     
         return ValidationResult(
             is_valid=len(errors) == 0,
-            corrected_query=query_obj.model_dump(), 
+            corrected_query=query_obj, 
             corrections=corrections,
             errors=errors,
             confidence_score=round(max(confidence, 0.1), 2),

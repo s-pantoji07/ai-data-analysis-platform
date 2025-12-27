@@ -32,12 +32,17 @@ class AnalyticsEngine:
 
             table_name = f"dataset_{dataset_id.replace('-', '_')}"
             try:
+            # FIX: Use 'nullstr' instead of 'na_values'
                 self.con.execute(
                     f"""
-                    CREATE OR REPLACE TABLE {table_name} AS
-                    SELECT * FROM read_csv_auto('{dataset.file_path}')
-                    """
+                CREATE OR REPLACE TABLE {table_name} AS
+                SELECT * FROM read_csv_auto(
+                    '{dataset.file_path}', 
+                    nullstr=['N/A', 'nan', 'null', 'None', ''],
+                    sample_size=20000
                 )
+                """
+            )
             except Exception as e:
                 raise AnalyticsExecutionError(f"Failed to load dataset: {str(e)}")
 
@@ -164,7 +169,7 @@ class AnalyticsEngine:
             if isinstance(query, dict):
                 query = AnalyticsQuery(**query)
         
-                table_name = self._load_dataset(query.dataset_id)
+            table_name = self._load_dataset(query.dataset_id)
 
         # UPDATED: A query is ONLY a profile request if EVERYTHING is empty
             is_profile_request = all([

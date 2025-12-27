@@ -22,7 +22,6 @@ class QueryPlanner:
         # 2. Semantic Mapping: Find columns mentioned in intent
         for col in columns:
             col_name = col["name"].lower()
-            # Check if column name or any aliases are in the intent string
             if col_name in intent_str or any(a.lower() in intent_str for a in col.get("aliases", [])):
                 if is_numeric(metadata, col["name"]):
                     found_measures.append(col["name"])
@@ -30,11 +29,31 @@ class QueryPlanner:
                     found_dimensions.append(col["name"])
 
         # 3. Determine Aggregation Function
-        func = "sum" # default
+        func = "sum"  # default
         if any(word in intent_str for word in ["average", "avg", "mean"]):
             func = "avg"
         elif "count" in intent_str:
             func = "count"
+
+        # 🔹 3.5 Detect Ranking Intent (NEW)
+        order_by = None
+        order_direction = "asc"
+        limit = None
+
+        if any(word in intent_str for word in ["top", "highest", "most", "best"]):
+            order_direction = "desc"
+        elif any(word in intent_str for word in ["lowest", "least", "bottom"]):
+            order_direction = "asc"
+
+        # Extract numeric limit (e.g., top 5, top 10)
+        for token in intent_str.split():
+            if token.isdigit():
+                limit = int(token)
+                break
+
+        # Decide column to order by (measure preferred)
+        if found_measures:
+            order_by = found_measures[0]
 
         # 4. Construct Query
         if not found_measures and not found_dimensions:
@@ -45,5 +64,8 @@ class QueryPlanner:
             group_by=found_dimensions,
             aggregations=[
                 Aggregation(column=m, function=func) for m in found_measures
-            ]
+            ],
+            order_by=order_by,
+            order_direction=order_direction,
+            limit=limit
         )

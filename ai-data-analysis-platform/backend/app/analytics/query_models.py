@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Literal
 from pydantic import BaseModel
 
 class Filter(BaseModel):
@@ -19,3 +19,8 @@ class AnalyticsQuery(BaseModel):
     order_direction:Optional[str] = "asc"
     aggregations:Optional[List[Aggregation]] =[]
     limit:Optional[int] = 100
+
+class Filter(BaseModel):
+    column:str
+    operator: Literal["=", "!=", "<", "<=", ">", ">=", "in", "not in"] 
+    value: Any
