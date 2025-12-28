@@ -79,3 +79,39 @@ def handle_file_upload(file: UploadFile, user_id: str = "default_user"):
         "profiling_summary": enriched_metadata["profiling_summary"],
         "message": "File uploaded and metadata enriched successfully"
     }
+
+
+def classify_dataset(dataset_id: str) -> dict:
+    """
+    Lightweight dataset classification for agent usage.
+    Uses persisted metadata only (NO file access).
+    """
+    db = SessionLocal()
+    try:
+        metadata = MetadataService.get_dataset_metadata(db, dataset_id)
+        if not metadata:
+            return {"description": "Unknown dataset"}
+
+        profiling = metadata.get("profiling_summary", {})
+        numeric_cols = profiling.get("numeric_columns", [])
+        categorical_cols = profiling.get("categorical_columns", [])
+        date_cols = profiling.get("date_columns", [])
+
+        description_parts = []
+
+        if date_cols:
+            description_parts.append("time-based records")
+        if categorical_cols:
+            description_parts.append(f"{len(categorical_cols)} categorical attributes")
+        if numeric_cols:
+            description_parts.append(f"{len(numeric_cols)} numeric measures")
+
+        description = "Dataset contains " + ", ".join(description_parts) if description_parts else "Tabular dataset"
+
+        return {
+            "dataset_id": dataset_id,
+            "description": description,
+            "dataset_type": metadata.get("dataset_type", "tabular")
+        }
+    finally:
+        db.close()
