@@ -37,7 +37,8 @@ class MetadataService:
                 id=str(uuid.uuid4()),
                 name=col["name"],
                 dtype=col["dtype"],
-                semantic_type=col["type"],
+                # Use .get() with a fallback to avoid KeyErrors
+                semantic_type=col.get("base_type", col.get("type", "categorical")), 
                 table_id=table.id
             ))
         db.commit()

@@ -8,40 +8,51 @@ import pandas as pd
 class DatasetService:
     @staticmethod
     def enrich_metadata(dataset_id: str, filename: str, file_path: str):
-        # Load CSV/Excel into dataframe
         df = load_dataframe(file_path)
 
-        columns_info = []
-        numeric_columns = []
-        categorical_columns = []
+        columns_metadata = []
         missing_values = {}
 
         for col in df.columns:
-            dtype = str(df[col].dtype)
-            col_type = "numeric" if pd.api.types.is_numeric_dtype(df[col]) else "categorical"
+            series = df[col]
+            dtype = str(series.dtype)
+            missing_values[col] = int(series.isna().sum())
 
-            columns_info.append({
+            # ---------- Base Type ----------
+            if pd.api.types.is_numeric_dtype(series):
+                base_type = "numeric"
+            elif pd.api.types.is_datetime64_any_dtype(series):
+                base_type = "datetime"
+            else:
+                base_type = "categorical"
+
+            # ---------- Semantic Tags ----------
+            semantic_tags = []
+
+            # Metric vs Dimension
+            if base_type == "numeric":
+                semantic_tags.append("metric")
+            else:
+                semantic_tags.append("dimension")
+
+            # Time detection
+            if base_type == "datetime" or "date" in col.lower() or "time" in col.lower():
+                semantic_tags.append("time")
+
+            # Identifier detection
+            if col.lower().endswith("id") or col.lower() in ["id", "uuid"]:
+                semantic_tags.append("identifier")
+
+            columns_metadata.append({
                 "name": col,
                 "dtype": dtype,
-                "type": col_type
+                "base_type": base_type,
+                "semantic_tags": semantic_tags
             })
 
-            missing_values[col] = int(df[col].isna().sum())
-
-            if col_type == "numeric":
-                numeric_columns.append(col)
-            else:
-                categorical_columns.append(col)
-
-        # Optional: detect date columns
-        date_columns = [col for col in df.columns if pd.api.types.is_datetime64_any_dtype(df[col])]
-
         profiling_summary = {
-            "columns": columns_info,
-            "missing_values": missing_values,
-            "numeric_columns": numeric_columns,
-            "categorical_columns": categorical_columns,
-            "date_columns": date_columns
+            "columns": columns_metadata,
+            "missing_values": missing_values
         }
 
         return {
@@ -51,6 +62,8 @@ class DatasetService:
             "dataset_type": "tabular",
             "profiling_summary": profiling_summary
         }
+        
+        
 
 def handle_file_upload(file: UploadFile, user_id: str = "default_user"):
     # 1. Validate & save file
@@ -93,9 +106,12 @@ def classify_dataset(dataset_id: str) -> dict:
             return {"description": "Unknown dataset"}
 
         profiling = metadata.get("profiling_summary", {})
-        numeric_cols = profiling.get("numeric_columns", [])
-        categorical_cols = profiling.get("categorical_columns", [])
-        date_cols = profiling.get("date_columns", [])
+        all_cols = profiling.get("columns", [])
+        
+        # Correctly filter based on your 'base_type' logic
+        numeric_cols = [c for c in all_cols if c.get("base_type") == "numeric"]
+        categorical_cols = [c for c in all_cols if c.get("base_type") == "categorical"]
+        date_cols = [c for c in all_cols if c.get("base_type") == "datetime"]
 
         description_parts = []
 

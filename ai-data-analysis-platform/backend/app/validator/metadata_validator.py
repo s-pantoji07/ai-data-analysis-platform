@@ -57,38 +57,56 @@ class MetadataValidator:
         return matches[0] if matches else None
 
     def validate(self, query: Union[AnalyticsQuery, dict]) -> ValidationResult:
-        if isinstance(query, dict):
-            query_obj = AnalyticsQuery(**query)
-        else:
-            query_obj = query
-
-        corrections = []
-        errors = []
-        confidence = 1.0
-
-        # Step 1: Normalize column names
-        corrections.extend(self._apply_column_normalization(query_obj))
-        
-        # Step 2: Auto-correct structural requirements (GROUP BY, ORDER BY)
+        # ---------- Normalize input ----------
+        query_obj = (
+            AnalyticsQuery(**query)
+            if isinstance(query, dict)
+            else query
+        )
+    
+        corrections: list[str] = []
+        errors: list[str] = []
+        confidence: float = 1.0
+    
+        # ---------- Step 1: Column normalization ----------
+        col_fixes = self._apply_column_normalization(query_obj)
+        if col_fixes:
+            corrections.extend(col_fixes)
+    
+        # ---------- Step 2: Structural auto-corrections ----------
         grp_fix = self._auto_correct_group_by(query_obj)
-        if grp_fix: corrections.append(grp_fix)
+        if grp_fix:
+            corrections.append(grp_fix)
     
         ord_fix = self._auto_correct_order_by(query_obj)
-        if ord_fix: corrections.append(ord_fix)
-
-        # Step 3: Check validity
-        errors.extend(self._validate_columns(query_obj))
-        errors.extend(self._validate_aggregations(query_obj))
+        if ord_fix:
+            corrections.append(ord_fix)
     
-        confidence -= (len(corrections) * 0.1)
+        # ---------- Step 3: Validation ----------
+        column_errors = self._validate_columns(query_obj)
+        agg_errors = self._validate_aggregations(query_obj)
     
+        errors.extend(column_errors)
+        errors.extend(agg_errors)
+    
+        # ---------- Step 4: Confidence scoring ----------
+        if corrections:
+            confidence -= min(0.3, len(corrections) * 0.05)
+    
+        if errors:
+            confidence -= min(0.5, len(errors) * 0.15)
+    
+        confidence = round(max(confidence, 0.1), 2)
+    
+        # ---------- Final result ----------
         return ValidationResult(
             is_valid=len(errors) == 0,
-            corrected_query=query_obj, 
+            corrected_query=query_obj,
             corrections=corrections,
             errors=errors,
-            confidence_score=round(max(confidence, 0.1), 2),
+            confidence_score=confidence,
         )
+    
 
     def _apply_column_normalization(self, query: AnalyticsQuery) -> List[Correction]:
         corrections = []
@@ -127,13 +145,24 @@ class MetadataValidator:
         query.group_by = list(set(current_gb + missing))
         return Correction(field="group_by", original=None, corrected=query.group_by, reason="Added missing group_by")
 
-    def _auto_correct_order_by(self, query: AnalyticsQuery) -> Optional[Correction]:
-        if not query.order_by or not query.aggregations: return None
-        for agg in query.aggregations:
-            if query.order_by == agg.column:
-                query.order_by = f"{agg.function.upper()}({agg.column})"
-                return Correction(field="order_by", original=agg.column, corrected=query.order_by, reason="Aggregated order_by")
+    def _auto_correct_order_by(self, query: AnalyticsQuery):
+        if not query.aggregations:
+            return None
+    
+        agg = query.aggregations[0]
+        alias = f"{agg.function.upper()}_{agg.column.replace(' ', '_')}"
+    
+        if query.order_by != alias:
+            original = query.order_by
+            query.order_by = alias
+            return Correction(
+                field="order_by",
+                original=original,
+                corrected=alias,
+                reason="Aligned order_by with aggregation alias"
+            )
         return None
+    
 
     def _validate_columns(self, query: AnalyticsQuery) -> List[str]:
         errors = []
@@ -152,3 +181,22 @@ class MetadataValidator:
             elif self.columns[agg.column]["semantic_type"] not in NUMERIC_TYPES and agg.function.lower() not in ["count", "distinct_count"]:
                 errors.append(f"Cannot apply {agg.function} to non-numeric {agg.column}.")
         return errors
+    
+    def _remove_filtered_group_by(self, query: AnalyticsQuery) -> Optional[Correction]:
+        if not query.group_by or not query.filters:
+            return None
+    
+        filtered_cols = {f.column for f in query.filters}
+        new_group_by = [c for c in query.group_by if c not in filtered_cols]
+    
+        if new_group_by != query.group_by:
+            original = query.group_by
+            query.group_by = new_group_by if new_group_by else None
+            return Correction(
+                field="group_by",
+                original=original,
+                corrected=query.group_by,
+                reason="Removed filtered columns from GROUP BY"
+            )
+        return None
+    

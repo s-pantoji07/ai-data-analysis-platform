@@ -1,0 +1,256 @@
+o truly test the robustness of your "Text-to-SQL" intent layer, you need datasets with varied data types (dates, currencies, categories) and slightly "messy" real-world structures.
+
+Here are four high-quality Kaggle datasets that will test your system in different ways:
+
+1. The "Business Intelligence" Test: Superstore Sales
+This is a classic retail dataset. It is perfect for testing temporal (time-based) queries and hierarchical categories.
+
+Why it's good: It has Order Date, Ship Date, Sales, Profit, and geographical data (State, City).
+
+Test Query: "What was the total profit in the Technology category for the year 2017?"
+
+Challenge: Can your engine parse the Year from a full date string like 2017-01-01?
+
+2. The "Comparison" Test: Spotify Tracks Dataset
+This dataset contains audio features for over 100,000 tracks across different genres.
+
+Why it's good: It mixes very precise floats (danceability, energy) with strings (track_genre).
+
+Test Query: "Find the top 5 most danceable pop songs with an energy score above 0.8."
+
+Challenge: This tests multiple numeric filters and a multi-column ranking logic.
+
+3. The "Human Resources" Test: IBM HR Analytics Attrition
+A fictional dataset created by IBM data scientists to predict employee turnover.
+
+Why it's good: It’s full of Categorical Booleans (Yes/No) and Ordinal data (Education level 1-5).
+
+Test Query: "What is the average monthly income for employees who travel frequently vs. those who don't?"
+
+Challenge: This tests if your engine can handle "Frequent" string matching and Group By logic on categorical fields.
+
+4. The "Market" Test: Avocado Prices
+A simple but effective dataset representing weekly 2018 retail scan data for national retail volume and price.
+
+Why it's good: It has a very specific "Type" column (organic vs conventional) and price data.
+
+Test Query: "What was the average price of organic avocados in Chicago during 2016?"
+
+Challenge: This requires filtering on three columns simultaneously: type, region, and year
+
+
+The "Human Resources" Test: IBM HR Analytics Attrition
+
+A fictional dataset created by IBM data scientists to predict employee turnover.
+
+
+
+Why it's good: It’s full of Categorical Booleans (Yes/No) and Ordinal data (Education level 1-5).
+
+Test Query: "What is the average monthly income for employees who travel frequently vs. those who don't?"
+
+Challenge: This tests if your engine can handle "Frequent" string matching and Group By logic on categorical fields.
+
+
+
+{
+
+"status": "success",
+
+"audit_id": "8bd0d8fe-7963-4374-bf8f-c905f3de82b6",
+
+"confidence": 1,
+
+"sql": "SELECT \"BusinessTravel\", AVG(\"MonthlyIncome\") AS \"AVG_MonthlyIncome\" FROM \"dataset_152900ba_79c8_456b_96fc_a36eb56b1037\" GROUP BY \"BusinessTravel\" LIMIT 100",
+
+"row_count": 3,
+
+"data": [
+
+{
+
+"BusinessTravel": "Non-Travel",
+
+"AVG_MonthlyIncome": 6261.946666666667
+
+},
+
+{
+
+"BusinessTravel": "Travel_Frequently",
+
+"AVG_MonthlyIncome": 6193.7256317689535
+
+},
+
+{
+
+"BusinessTravel": "Travel_Rarely",
+
+"AVG_MonthlyIncome": 6619.70757430489
+
+}
+
+],
+
+"type": "query_result"
+
+}
+
+{
+
+"status": "success",
+
+"audit_id": "9429bb95-5af4-4b25-8729-1f7505b8ece5",
+
+"confidence": 1,
+
+"sql": "SELECT \"region\", AVG(\"AveragePrice\") AS \"AVG_AveragePrice\" FROM \"dataset_ed242e57_5713_4727_945b_6ce040f6e9f8\" WHERE \"region\" = 'Chicago' AND \"year\" = 2016 AND \"type\" = 'organic' GROUP BY \"region\" LIMIT 100",
+
+"row_count": 1,
+
+"data": [
+
+{
+
+"region": "Chicago",
+
+"AVG_AveragePrice": 1.7634615384615382
+
+}
+
+],
+
+"type": "query_result"
+
+}
+
+The "Market" Test: Avocado Prices
+
+A simple but effective dataset representing weekly 2018 retail scan data for national retail volume and price.
+
+
+
+Why it's good: It has a very specific "Type" column (organic vs conventional) and price data.
+
+Test Query: "What was the average price of organic avocados in Chicago during 2016?"
+
+Challenge: This requires filtering on three columns simultaneously: type, region, and year.
+
+
+
+{
+
+"status": "success",
+
+"audit_id": "842dfaae-0274-4017-b81e-9d3912d3a946",
+
+"confidence": 1,
+
+"sql": "SELECT \"track_name\", AVG(\"danceability\") AS \"AVG_danceability\" FROM \"dataset_83b9a903_2f6f_4c5f_936f_b110143ad1fa\" WHERE \"track_genre\" = 'pop' AND \"energy\" > 0.8 GROUP BY \"track_name\" LIMIT 5",
+
+"row_count": 5,
+
+"data": [
+
+{
+
+"track_name": "Thaai Kelavi (From \"Thiruchitrambalam\")",
+
+"AVG_danceability": 0.661
+
+},
+
+{
+
+"track_name": "O'Meri Laila",
+
+"AVG_danceability": 0.577
+
+},
+
+{
+
+"track_name": "Levitating",
+
+"AVG_danceability": 0.6984999999999998
+
+},
+
+{
+
+"track_name": "Tum Hi Ho Bandhu",
+
+"AVG_danceability": 0.715
+
+},
+
+{
+
+"track_name": "Baby",
+
+"AVG_danceability": 0.728
+
+}
+
+],
+
+"type": "query_result"
+
+}
+
+The "Comparison" Test: Spotify Tracks Dataset
+
+This dataset contains audio features for over 100,000 tracks across different genres.
+
+
+
+Why it's good: It mixes very precise floats (danceability, energy) with strings (track_genre).
+
+Test Query: "Find the top 5 most danceable pop songs with an energy score above 0.8."
+
+Challenge: This tests multiple numeric filters and a multi-column ranking logic.
+
+
+
+{
+
+"status": "success",
+
+"audit_id": "1c5a9fd5-3d3c-4665-8f93-77cccb72616f",
+
+"confidence": 1,
+
+"sql": "SELECT \"Category\", SUM(\"Sales\") AS \"SUM_Sales\" FROM \"dataset_7f02dbae_c4cd_4de7_8377_0d22db40b850\" WHERE \"Category\" = 'Technology' AND \"Order Date\" >= '2017-01-01' AND \"Order Date\" <= '2017-12-31' GROUP BY \"Category\" LIMIT 100",
+
+"row_count": 1,
+
+"data": [
+
+{
+
+"Category": "Technology",
+
+"SUM_Sales": 221961.94400000013
+
+}
+
+],
+
+"type": "query_result"
+
+}
+
+
+
+The "Business Intelligence" Test: Superstore Sales
+
+This is a classic retail dataset. It is perfect for testing temporal (time-based) queries and hierarchical categories.
+
+
+
+Why it's good: It has Order Date, Ship Date, Sales, Profit, and geographical data (State, City).
+
+Test Query: "What was the total profit in the Technology category for the year 2017?"
+
+Challenge: Can your engine parse the Year from a full date string like 2017-01-01?

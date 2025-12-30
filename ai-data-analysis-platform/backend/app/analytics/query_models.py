@@ -3,9 +3,8 @@ from pydantic import BaseModel
 
 class Filter(BaseModel):
     column:str
-    operator:str
-    value:Any
-
+    operator: Literal["=", "!=", "<", "<=", ">", ">=", "in", "not in"] 
+    value: Any
 class Aggregation(BaseModel):
     column:str
     function:str
@@ -13,14 +12,10 @@ class Aggregation(BaseModel):
 class AnalyticsQuery(BaseModel):
     dataset_id: str
     select:Optional[List[str]] = None
-    filters:Optional[List[Filter]]=[]
-    group_by:Optional[List[str]] =[]
+    filters:Optional[List[Filter]]=None
+    group_by:Optional[List[str]] =None
     order_by:Optional[str] = None
-    order_direction:Optional[str] = "asc"
-    aggregations:Optional[List[Aggregation]] =[]
+    order_direction:Optional[str] = "desc"
+    aggregations:Optional[List[Aggregation]] =None
     limit:Optional[int] = 100
 
-class Filter(BaseModel):
-    column:str
-    operator: Literal["=", "!=", "<", "<=", ">", ">=", "in", "not in"] 
-    value: Any
