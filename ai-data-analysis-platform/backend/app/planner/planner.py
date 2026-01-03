@@ -1,92 +1,62 @@
+# app/planner/planner.py
 from typing import Any
-from app.analytics.query_models import AnalyticsQuery, Aggregation
+from app.analytics.query_models import AnalyticsQuery, Aggregation, Filter
 from app.planner.exceptions import QueryPlanningError
-
+from app.intent.models import UserIntent
 
 class QueryPlanner:
-    def plan(self, metadata: dict, intent: Any) -> AnalyticsQuery:
-        intent_str = (
-            intent.raw_query.lower()
-            if hasattr(intent, "raw_query")
-            else str(intent).lower()
-        )
-
+    def plan(self, metadata: dict, intent: UserIntent) -> AnalyticsQuery:
+        """
+        Converts the LLM-parsed UserIntent into a concrete AnalyticsQuery.
+        This version is strictly data-agnostic and handles all intent components.
+        """
         dataset_id = metadata["dataset_id"]
-        columns = metadata.get("profiling_summary", {}).get("columns", [])
-
-        measures = []
-        candidate_dimensions = []
-
-        # ----------------------------------
-        # STEP 1: Semantic mapping
-        # ----------------------------------
-        for col in columns:
-            name = col["name"]
-            tags = col.get("semantic_tags", [])
-
-            if "metric" in tags:
-                measures.append(name)
-
-            if "dimension" in tags:
-                candidate_dimensions.append(name)
-
-        if not measures:
-            raise QueryPlanningError(
-                "No numeric measures found in dataset to answer this query."
+        
+        # 1. Handle Aggregations (Measures)
+        aggregations = []
+        for m in (intent.measures or []):
+            aggregations.append(
+                Aggregation(column=m.column, function=m.function)
             )
 
-        # ----------------------------------
-        # STEP 2: Infer filtered columns
-        # ----------------------------------
-        filtered_columns = set()
+        # 2. Handle Filters (WHERE clause) - THE FIX
+        # We map IntentFilter -> AnalyticsQuery.Filter
+        filters = []
+        if intent.filters:
+            for f in intent.filters:
+                filters.append(
+                    Filter(
+                        column=f.column,
+                        operator=f.operator,
+                        value=f.value
+                    )
+                )
 
-        for col in columns:
-            col_name = col["name"].lower()
-            if col_name in intent_str:
-                filtered_columns.add(col["name"])
+        # 3. Determine Order By Aliasing (Matches Engine Logic)
+        # Your engine uses: "{FUNCTION}_{COLUMN}"
+        if aggregations:
+            primary_agg = aggregations[0]
+            func_name = primary_agg.function.upper()
+            col_clean = primary_agg.column.replace(" ", "_").replace("*", "total")
+            order_by_alias = f"{func_name}_{col_clean}"
+        else:
+            order_by_alias = intent.order_by
 
-        # ----------------------------------
-        # STEP 3: Remove filtered dimensions
-        # ----------------------------------
-        dimensions = [
-            d for d in candidate_dimensions
-            if d not in filtered_columns
-        ]
+        # 4. Handle Dimensions (GROUP BY)
+        dimensions = intent.dimensions if intent.dimensions else None
 
-        # ----------------------------------
-        # STEP 4: Aggregation
-        # ----------------------------------
-        func = "sum"
-        if any(w in intent_str for w in ["avg", "average", "mean"]):
-            func = "avg"
-        elif "count" in intent_str:
-            func = "count"
-
-        # ----------------------------------
-        # STEP 5: Ranking
-        # ----------------------------------
-        order_direction = "desc"
-        if any(w in intent_str for w in ["lowest", "least", "bottom"]):
+        # 5. Semantic Direction Override
+        intent_str = (intent.raw_query or "").lower()
+        order_direction = intent.order_direction or "desc"
+        if any(w in intent_str for w in ["lowest", "least", "bottom", "minimum"]):
             order_direction = "asc"
-
-        order_by = measures[0]
-
-        # ----------------------------------
-        # STEP 6: Limit
-        # ----------------------------------
-        limit = None
-        for token in intent_str.split():
-            if token.isdigit():
-                limit = int(token)
-                break
 
         return AnalyticsQuery(
             dataset_id=dataset_id,
-            group_by=dimensions if dimensions else None,
-            aggregations=[
-                Aggregation(column=measures[0], function=func)
-            ],
-            order_by=order_by,
+            filters=filters,           # Pass filters to the engine
+            group_by=dimensions,       # Pass group by columns
+            aggregations=aggregations, # Pass calculations
+            order_by=order_by_alias,   # Pass the alias for sorting
             order_direction=order_direction,
-            limit=limit
+            limit=intent.limit or 10
         )

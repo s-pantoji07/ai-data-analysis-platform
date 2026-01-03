@@ -1,7 +1,7 @@
 from fastapi import UploadFile
 from app.utils.file_utils import validate_file, save_file
 from app.services.metadata_service import MetadataService
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal,get_db
 from app.utils.dataframe_utils import load_dataframe
 import pandas as pd
 
@@ -129,5 +129,11 @@ def classify_dataset(dataset_id: str) -> dict:
             "description": description,
             "dataset_type": metadata.get("dataset_type", "tabular")
         }
+    finally:
+        db.close()
+def get_dataset_metadata(dataset_id: str):
+    db = next(get_db())
+    try:
+        return MetadataService.get_dataset_metadata(db, dataset_id)
     finally:
         db.close()

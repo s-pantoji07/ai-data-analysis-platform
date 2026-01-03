@@ -33,6 +33,8 @@ class MetadataService:
         db.flush()
 
         for col in profiling_summary["columns"]:
+            if col["name"].lower().startswith("unnamed") or "index" in col["name"].lower():
+                continue
             db.add(DataColumn(
                 id=str(uuid.uuid4()),
                 name=col["name"],

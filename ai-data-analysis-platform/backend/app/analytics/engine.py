@@ -54,12 +54,26 @@ class AnalyticsEngine:
             if query.group_by:
                 select_parts.extend([f'"{c}"' for c in query.group_by])
 
+            # Inside engine.py -> _build_sql method
             if query.aggregations:
+                # Inside engine.py -> _build_sql
                 for agg in query.aggregations:
                     func = agg.function.upper()
                     col = agg.column
-                    alias = f'"{func}_{col.replace(" ", "_")}"'
-                    select_parts.append(f'{func}("{col}") AS {alias}')
+                    
+                    # 🛡️ FIX 1: Safety for the wildcard
+                    if col == "*" or col.lower().startswith("unnamed"):
+                        actual_func = "COUNT"
+                        actual_col = "*"
+                        clean_name = "total"
+                    else:
+                        actual_func = func
+                        actual_col = f'"{col}"'
+                        clean_name = col.replace(" ", "_")
+                
+                    # 🛡️ FIX 2: Create a PREDICTABLE alias
+                    alias = f'"{actual_func}_{clean_name}"'
+                    select_parts.append(f"{actual_func}({actual_col}) AS {alias}")
 
             select_clause = ", ".join(select_parts)
 

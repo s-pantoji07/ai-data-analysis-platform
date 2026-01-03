@@ -1,21 +1,39 @@
 from app.intent.llm_intent_parser import GeminiIntentParser
-from app.intent.intent_mapper import map_intent_to_query
 from app.validator.metadata_validator import MetadataValidator
 from app.validator.confidence_gate import ConfidenceGate, ExecutionAction
 from app.planner.exceptions import QueryPlanningError
-from  app.analytics.engine import AnalyticsEngine
+from app.db.session import SessionLocal
+from app.services.metadata_service import MetadataService
+from app.planner.planner import QueryPlanner
 
-# app/services/planner_service.py
+def plan_query(dataset_id: str, user_query_text: str):
+    # 1. Convert String to Intent Object (LLM)
+    parser = GeminiIntentParser()
+    intent_obj = parser.parse(user_query_text, dataset_id) 
 
-def plan_query(user_intent):
-    # 1. Map intent to a structured AnalyticsQuery
-    validation_result = map_intent_to_query(user_intent)
+    # 2. Fetch Metadata
+    db = SessionLocal()
+    try:
+        metadata = MetadataService.get_dataset_metadata(db, dataset_id)
+    finally:
+        db.close()
 
-    # 2. Confidence decision
+    # 3. Pass the INTENT OBJECT to the Planner (NOT the string)
+    planner = QueryPlanner()
+    planned_query = planner.plan(metadata, intent_obj)
+
+    # 4. Validate
+    validator = MetadataValidator(dataset_id)
+    validation_result = validator.validate(planned_query)
+
+    # 5. Confidence Gate
     decision = ConfidenceGate.decide(validation_result)
-
     if decision.action == ExecutionAction.BLOCK:
-        raise QueryPlanningError(decision.message)
+        raise QueryPlanningError(f"Query blocked: {decision.message}")
 
-    # Return the validation result object so the caller can use the corrected_query
-    return validation_result
+    return {
+        "planned_query": validation_result.corrected_query, 
+        "intent_obj": intent_obj, 
+        "confidence": validation_result.confidence_score,
+        "corrections": [c.message for c in validation_result.corrections]
+    }

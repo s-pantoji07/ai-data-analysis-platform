@@ -1,29 +1,38 @@
-from typing import Dict,Any
+from typing import Dict, Any
 from app.analytics.engine import AnalyticsEngine
-from app.analytics.query_models import AnalyticsQuery
+from app.services.dataset_service import get_dataset_metadata
 
-def preview_tools(
-        dataset_id:str,
-        mode:str="head",
-        limit:int=5,
-)->Dict[str,Any]:
-    
+DEFAULT_PREVIEW_ROWS = 5
 
-    engine=AnalyticsEngine()
+def preview_tool(dataset_id: str, limit: int = DEFAULT_PREVIEW_ROWS) -> Dict[str, Any]:
+    engine = AnalyticsEngine()
 
-    query=AnalyticsQuery(
-        dataset_id=dataset_id,
-        limit=limit
+    table_name = engine._load_dataset(dataset_id)
+
+    df = engine.con.execute(
+        f'SELECT * FROM "{table_name}" LIMIT {limit}'
+    ).df()
+
+    # Fetch stored profiling metadata
+    metadata = get_dataset_metadata(dataset_id) or {}
+
+    missing_summary = (
+        metadata
+        .get("profiling_summary", {})
+        .get("missing_values", {})
     )
 
-    if mode =="tail":
-        query.order_direction = "desc"
+    missing_columns = [
+        col for col, count in missing_summary.items() if count > 0
+    ]
 
-    result = engine.execute(query)
-
-    return{
-        "type":"preview",
-        "mode":mode,
-        "row_count":result.row_count,
-        "data":result.data
+    return {
+        "type": "preview_result",
+        "dataset_id": dataset_id,
+        "columns": list(df.columns),
+        "rows": df.to_dict(orient="records"),
+        "row_count": len(df),
+        "column_count": len(df.columns),
+        "has_missing_values": len(missing_columns) > 0,
+        "missing_columns": missing_columns
     }

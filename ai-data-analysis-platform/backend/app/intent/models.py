@@ -19,7 +19,8 @@ class UserIntent(BaseModel):
         "comparison",
         "trend",
         "ranking",
-        "distribution"
+        "distribution",
+        "visualization"
     ]
 #optinal components of the intent
     dimensions: Optional[List[str]] = None

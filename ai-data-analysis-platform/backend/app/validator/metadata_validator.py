@@ -31,7 +31,7 @@ class MetadataValidator:
                     "semantic_type": str(col.semantic_type).lower(),
                     "samples": getattr(col, 'samples', "N/A") 
                 }
-                for col in cols
+                for col in cols if not col.name.lower().startswith("unnamed")
             }
         except Exception:
             return {} 
@@ -150,7 +150,12 @@ class MetadataValidator:
             return None
     
         agg = query.aggregations[0]
-        alias = f"{agg.function.upper()}_{agg.column.replace(' ', '_')}"
+        
+        # 🛡️ FIX: Use the same logic as the engine to predict the alias
+        col_name = "total" if (agg.column == "*" or agg.column.lower().startswith("unnamed")) else agg.column.replace(" ", "_")
+        func_name = "COUNT" if agg.column.lower().startswith("unnamed") else agg.function.upper()
+        
+        alias = f"{func_name}_{col_name}"
     
         if query.order_by != alias:
             original = query.order_by
@@ -159,7 +164,7 @@ class MetadataValidator:
                 field="order_by",
                 original=original,
                 corrected=alias,
-                reason="Aligned order_by with aggregation alias"
+                reason="Aligned order_by with calculated alias"
             )
         return None
     
@@ -175,11 +180,16 @@ class MetadataValidator:
     def _validate_aggregations(self, query: AnalyticsQuery) -> List[str]:
         errors = []
         for agg in (query.aggregations or []):
-            if agg.column == "*": continue
+            if agg.column == "*": 
+                continue
+                
+            # 🛡️ AUTO-HEAL: If LLM picked an index column, fix it to *
+            if agg.column.lower().startswith("unnamed"):
+                agg.column = "*"
+                continue 
+    
             if agg.column not in self.columns:
                 errors.append(f"Unknown aggregation column '{agg.column}'.")
-            elif self.columns[agg.column]["semantic_type"] not in NUMERIC_TYPES and agg.function.lower() not in ["count", "distinct_count"]:
-                errors.append(f"Cannot apply {agg.function} to non-numeric {agg.column}.")
         return errors
     
     def _remove_filtered_group_by(self, query: AnalyticsQuery) -> Optional[Correction]:
