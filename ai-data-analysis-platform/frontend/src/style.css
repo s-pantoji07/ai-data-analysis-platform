@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Add a global reset for the Power BI look */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: #F3F2F1;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
